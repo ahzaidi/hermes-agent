@@ -4,11 +4,16 @@ import type { SyntaxHighlighterProps } from '@assistant-ui/react-streamdown'
 import { type ComponentProps, type FC, lazy, Suspense, useMemo } from 'react'
 import type ShikiHighlighter from 'react-shiki'
 
+import { runInTerminal } from '@/app/right-sidebar/store'
 import { CodeCard, CodeCardBody } from '@/components/chat/code-card'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
+import { Codicon } from '@/components/ui/codicon'
 import { CopyButton } from '@/components/ui/copy-button'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { isLikelyProseCodeBlock } from '@/lib/markdown-code'
+import { shellCommandToRun } from '@/lib/shell-fence'
 
 /**
  * Streamdown's code adapter renders header + body as inline siblings, so we
@@ -144,8 +149,30 @@ export const SyntaxHighlighter: FC<HermesSyntaxHighlighterProps> = ({
 
   const plain = defer || exceedsHighlightBudget(trimmed)
 
+  // Shell fences get a Run alongside Copy: the command the model just wrote is
+  // the one thing in a reply the user almost always wants to execute, and
+  // copy-then-paste-then-Enter is three steps for it. Runs in Hermes's own
+  // terminal pane (visible, in the same window) rather than a detached shell,
+  // so the command and its output stay next to the reply that suggested it.
+  const runnable = shellCommandToRun(language, trimmed)
+
   return (
     <CodeCard data-streaming={defer ? 'true' : undefined}>
+      {runnable && (
+        <Tip label={t.assistant.tool.runInTerminal}>
+          <button
+            aria-label={t.assistant.tool.runInTerminal}
+            className="absolute right-8 top-1.5 z-10 grid h-5 place-items-center rounded-md px-1 text-(--ui-text-tertiary) opacity-0 transition-opacity hover:text-foreground group-hover/code:opacity-100 focus-visible:opacity-100"
+            onClick={() => {
+              triggerHaptic('selection')
+              runInTerminal(runnable)
+            }}
+            type="button"
+          >
+            <Codicon name="play" size="0.625rem" />
+          </button>
+        </Tip>
+      )}
       <CopyButton
         appearance="inline"
         className="absolute right-1.5 top-1.5 z-10 h-5 gap-0 rounded-md px-1 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100"

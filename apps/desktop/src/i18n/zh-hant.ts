@@ -2423,6 +2423,9 @@ export const zhHant = defineLocale({
       starmap: '記憶圖譜',
       openStarmap: '開啟記憶圖譜',
       turnRunning: '執行中',
+      tokenRate: rate => `${rate} tok/s`,
+      tokenRateTitle: '每秒輸出 token 數（本輪）',
+      toggleTokenRate: 'Token 速度',
       contextUsage: '上下文使用量',
       contextUsagePanel: {
         categories: {
@@ -2746,6 +2749,7 @@ export const zhHant = defineLocale({
     },
     tool: {
       copyCode: '複製程式碼',
+      runInTerminal: '在終端機中執行',
       renderingImage: '正在渲染圖片',
       copyOutput: '複製輸出',
       copyCommand: '複製指令',
