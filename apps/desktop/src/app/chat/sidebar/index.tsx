@@ -127,6 +127,7 @@ import {
 } from '@/store/session'
 import { $sessionDotStateById, sessionStatusBucket } from '@/store/session-dot-state'
 import { $unconfirmedPinWrites } from '@/store/session-pin-sync'
+import { clearSessionSelection } from '@/store/session-selection'
 import { $focusedStoredSessionId, $workingSessionIds, type SplitDir } from '@/store/session-states'
 import { ackAllSessionsRead } from '@/store/session-unread'
 import { markSessionUnread } from '@/store/session-unread-remote'
@@ -441,6 +442,21 @@ export function ChatSidebar({
   const [messagingVisible, setMessagingVisible] = useState<Record<string, number>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const trimmedQuery = searchQuery.trim()
+
+  // Esc drops the multi-selection. Capture phase and unconditional: the
+  // selection is a sidebar-wide mode, so it must not depend on where focus
+  // happens to sit, and clearing an empty selection is a no-op.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        clearSessionSelection()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [])
 
   // Hotkey (session.focusSearch) → focus the field once it's mounted.
   useEffect(() => {

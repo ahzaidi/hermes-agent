@@ -3,7 +3,7 @@
 // component) so the precedence — the part that's easy to get subtly wrong —
 // is unit-testable without rendering the whole sidebar.
 
-export type SessionRowClickAction = 'archive' | 'newTab' | 'newWindow' | 'pin' | 'resume'
+export type SessionRowClickAction = 'archive' | 'resume' | 'selectRange' | 'selectToggle'
 
 export interface SessionRowClickModifiers {
   altKey: boolean
@@ -15,35 +15,31 @@ export interface SessionRowClickModifiers {
 /**
  * Resolve the click action from its modifiers.
  *
- * Precedence matters: the multi-modifier gestures (⌥+⇧ archive, ⌘/⌃+⇧ new
- * window) MUST be checked before the single-modifier pin (⇧) and new-tab
- * (⌘/⌃) gestures, because they set those flags too — testing `shiftKey`
- * first would swallow both into "pin".
+ * ⇧ and ⌘/⌃ are the file-manager selection gestures (range and toggle): they
+ * feed the sidebar's multi-select, which the row's ⋯ and right-click menus then
+ * act on in bulk. They used to mean pin and open-in-new-tab; both verbs are
+ * still one right-click away, and middle-click still opens a new tab.
  *
- * Archive is independent of window support (it works in the web embed too);
- * only the new-window gesture needs standalone windows, and without them
- * ⌘/⌃+⇧ falls through to the plain ⌘/⌃ new-tab behaviour.
+ * Precedence matters: ⌥+⇧ (archive) MUST be checked before the single-modifier
+ * gestures, because it sets `shiftKey` too — testing `shiftKey` first would
+ * swallow it into "select a range".
  */
-export function resolveSessionRowClick(
-  { altKey, ctrlKey, metaKey, shiftKey }: SessionRowClickModifiers,
-  opts: { canOpenWindow: boolean }
-): SessionRowClickAction {
-  const primaryModifier = metaKey || ctrlKey
-
+export function resolveSessionRowClick({
+  altKey,
+  ctrlKey,
+  metaKey,
+  shiftKey
+}: SessionRowClickModifiers): SessionRowClickAction {
   if (altKey && shiftKey) {
     return 'archive'
   }
 
-  if (primaryModifier && shiftKey && opts.canOpenWindow) {
-    return 'newWindow'
-  }
-
-  if (primaryModifier) {
-    return 'newTab'
-  }
-
   if (shiftKey) {
-    return 'pin'
+    return 'selectRange'
+  }
+
+  if (metaKey || ctrlKey) {
+    return 'selectToggle'
   }
 
   return 'resume'
