@@ -63,6 +63,14 @@ def resolve_exec_command() -> str:
     Prefer the real ``hermes`` executable (argv[0] or PATH). When Hermes
     runs as a module with no launcher installed, use the current
     interpreter, also absolute.
+
+    Always passes ``--skip-build``. A desktop-entry click is a LAUNCH, never a
+    build: the entry is ``Terminal=false``, so a build's output, prompts and
+    failures are all invisible. Without this a click after any source change
+    silently repacks (minutes of no feedback), and on Linux the repack recreates
+    Electron's setuid sandbox helper, which used to demand a sudo password that
+    has no tty to be typed into -- the launch then failed with no visible cause.
+    Building stays an explicit ``hermes desktop`` from a terminal.
     """
     from hermes_cli.relaunch import resolve_hermes_bin
 
@@ -75,14 +83,25 @@ def resolve_exec_command() -> str:
             # `#!/usr/bin/env python3` when argv[0] came from the shell
             # installer's bash wrapper). Launched from the .desktop entry that
             # shebang resolves to the SYSTEM python and dies on the first
-            # third-party import (#90292) — silently, since Terminal=false.
+            # third-party import (#90292) - silently, since Terminal=false.
             # sys.executable is the interpreter actually running Hermes (the
             # venv one), so prefix it explicitly.
-            argv = [str(Path(sys.executable).resolve()), str(resolved), "desktop"]
+            argv = [
+                str(Path(sys.executable).resolve()),
+                str(resolved),
+                "desktop",
+                "--skip-build",
+            ]
         else:
-            argv = [str(resolved), "desktop"]
+            argv = [str(resolved), "desktop", "--skip-build"]
     else:
-        argv = [str(Path(sys.executable).resolve()), "-m", "hermes_cli.main", "desktop"]
+        argv = [
+            str(Path(sys.executable).resolve()),
+            "-m",
+            "hermes_cli.main",
+            "desktop",
+            "--skip-build",
+        ]
     return " ".join(_quote_exec_arg(a) for a in argv)
 
 

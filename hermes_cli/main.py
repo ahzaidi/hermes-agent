@@ -7673,6 +7673,50 @@ def _desktop_linux_needs_no_sandbox() -> bool:
         return False
 
 
+def _desktop_linux_userns_sandbox_available() -> bool:
+    """Return True when Chromium can sandbox via unprivileged user namespaces.
+
+    When it can, Electron's setuid ``chrome-sandbox`` helper is unnecessary:
+    the zygote confines renderers with CLONE_NEWUSER instead, which is
+    Chromium's default path on any modern kernel. That matters because every
+    ``npm run pack`` recreates the helper owned by the invoking user, so
+    insisting on the setuid path means a ``sudo`` prompt after every build --
+    and from a ``Terminal=false`` .desktop launch there is no tty to prompt on,
+    so the launch fails silently AND records a pam_faillock entry.
+
+    Verified on CachyOS 6.7.4 + Electron 40: with a non-setuid helper the
+    sandboxed zygote still lands in its own user and pid namespace.
+    """
+    if sys.platform != "linux":
+        return False
+
+    # Ubuntu 23.10+ AppArmor hardening breaks the userns path for normal users.
+    try:
+        with open("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", encoding="utf-8") as f:
+            if f.read().strip() == "1":
+                return False
+    except OSError:
+        pass
+
+    # Debian/Arch-style toggle; absent on kernels where userns is always on.
+    try:
+        with open("/proc/sys/kernel/unprivileged_userns_clone", encoding="utf-8") as f:
+            if f.read().strip() != "1":
+                return False
+    except OSError:
+        pass
+
+    # A zero budget means no namespace can be created at all.
+    try:
+        with open("/proc/sys/user/max_user_namespaces", encoding="utf-8") as f:
+            if int(f.read().strip() or "0") <= 0:
+                return False
+    except (OSError, ValueError):
+        return False
+
+    return True
+
+
 def _desktop_linux_sandbox_helper_is_regular_file(packaged_executable: Path) -> bool:
     """Return True when ``chrome-sandbox`` exists as a regular file."""
     if sys.platform != "linux":
@@ -7689,6 +7733,13 @@ def _desktop_linux_sandbox_helper_is_regular_file(packaged_executable: Path) -> 
 def _desktop_linux_sandbox_fixup(packaged_executable: Path) -> bool:
     """Configure Electron's Linux SUID sandbox helper when required."""
     if sys.platform != "linux":
+        return True
+
+    # The setuid helper is only needed when the kernel cannot give Chromium an
+    # unprivileged user namespace. When it can, skip the whole chown/chmod path:
+    # asking for sudo on every launch after a pack is what made a GUI launch
+    # fail silently and burn pam_faillock attempts.
+    if _desktop_linux_userns_sandbox_available():
         return True
 
     sandbox = packaged_executable.parent / "chrome-sandbox"
