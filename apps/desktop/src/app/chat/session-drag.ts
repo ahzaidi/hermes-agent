@@ -10,6 +10,9 @@
  *     that edge (the zone sheet morphs to the half);
  *   - a chat zone's CENTER / the composer → link: insert an `@session` chip
  *     into that surface's composer (ChatDropOverlay owns the visual);
+ *   - the sidebar's PINNED section → pin: the one sidebar target, because
+ *     "drag it up into Pinned" is the gesture every list with a favourites
+ *     tray teaches (`$pinDropActive` lights the tray);
  *   - anything else (sidebar, terminal, gutters) → deny.
  *
  * Zones that don't host a chat surface are NOT targets — the overlay never
@@ -25,6 +28,7 @@
  * that crossed windows).
  */
 
+import { atom } from 'nanostores'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import { queryAllVisible } from '@/components/pane-shell/pane-visibility'
@@ -48,6 +52,9 @@ import {
   SESSION_TILE_DRAG
 } from '@/components/pane-shell/tree/store'
 import type { EngineZone, ZoneRect } from '@/components/pane-shell/tree/zones-engine'
+import { pinSession } from '@/store/layout'
+import { $sessions, sessionMatchesStoredId, sessionPinId } from '@/store/session'
+import { $selectedSessionIds, clearSessionSelection } from '@/store/session-selection'
 import { openSessionTile, type TileDock } from '@/store/session-states'
 
 import { requestComposerInsertRefs } from './composer/focus'
@@ -91,6 +98,20 @@ function tileZoneHost(groupId: string): { chat: boolean; pane: string } | null {
   return pane ? { chat: panes.some(isSessionStripPane), pane } : null
 }
 
+/** Lit while a session drag hovers the sidebar's Pinned drop tray, so the tray
+ *  can show it will accept the drop. The generic zone overlay can't: the
+ *  sidebar is not a layout zone, so it reads there as a deny. */
+export const $pinDropActive = atom(false)
+
+/** Pins are keyed on the durable lineage-root id — the dragged id may be the
+ *  live tip after compression, and pinning that would lose the pin on the next
+ *  rotation. */
+function pinIdFor(sessionId: string): string {
+  const row = $sessions.get().find(session => sessionMatchesStoredId(session, sessionId))
+
+  return row ? sessionPinId(row) : sessionId
+}
+
 /**
  * Begin dragging a session — a sidebar row OR a tile's own tab (same drop
  * language either way: stack, split, or composer link). Sub-threshold releases
@@ -114,6 +135,8 @@ export function startSessionDrag(
   // move before commit, so these always match the released-at position).
   let split: { anchor: string; before?: null | string; pos: TileDock } | null = null
   let link: null | string = null
+  let pinDrops: ZoneRect[] = []
+  let pinning = false
 
   // The drag SOURCE (sidebar row or tile tab). Captured synchronously — React
   // clears `currentTarget` after the pointerdown handler returns, but this runs
@@ -131,6 +154,7 @@ export function startSessionDrag(
       strips = snapshotStrips()
       surfaces = snapshotSurfaces()
       composers = queryAllVisible('[data-slot="composer-root"]').map(snapRect)
+      pinDrops = queryAllVisible('[data-session-pin-drop]').map(snapRect)
       zoneHost = new Map(zones.map(zone => [zone.id, tileZoneHost(zone.id)]))
       source?.style.setProperty('opacity', '0.45')
       // The same sentinel the zone overlay + chat surfaces key off — the
@@ -142,9 +166,28 @@ export function startSessionDrag(
       if (source) {
         source.style.opacity = restoreOpacity
       }
+
+      pinning = false
+      $pinDropActive.set(false)
     },
 
     resolveMove(x, y): DropHint | null {
+      // The Pinned tray wins outright: it sits in the sidebar, which hosts no
+      // zone, so nothing else can be competing for this position.
+      const overPin = pinDrops.some(rect => rectContains(rect, x, y))
+
+      if (overPin !== pinning) {
+        pinning = overPin
+        $pinDropActive.set(overPin)
+      }
+
+      if (overPin) {
+        split = null
+        link = null
+
+        return null
+      }
+
       const zone = zones.find(z => rectContains(z.rect, x, y))
       const host = zone ? zoneHost.get(zone.id) : null
 
@@ -190,6 +233,24 @@ export function startSessionDrag(
     },
 
     onCommit() {
+      if (pinning) {
+        // Dragging a row that's part of a multi-selection pins the whole
+        // selection — the same "the selection is the subject" rule the row's
+        // bulk verbs follow.
+        const selected = $selectedSessionIds.get()
+        const ids = selected.includes(payload.id) ? selected : [payload.id]
+
+        for (const id of ids) {
+          pinSession(pinIdFor(id))
+        }
+
+        if (ids.length > 1) {
+          clearSessionSelection()
+        }
+
+        return
+      }
+
       if (split) {
         openSessionTile(payload.id, split.pos, split.anchor, split.before)
         // A tile for this session may already exist (openSessionTile is

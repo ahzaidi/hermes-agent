@@ -3058,6 +3058,9 @@ export const zh: Translations = {
       starmap: '记忆图谱',
       openStarmap: '打开记忆图谱',
       turnRunning: '运行中',
+      tokenRate: rate => `${rate} tok/s`,
+      tokenRateTitle: '每秒输出 token 数（本轮）',
+      toggleTokenRate: 'Token 速度',
       contextUsage: '上下文用量',
       contextUsagePanel: {
         categories: {
@@ -3409,6 +3412,7 @@ export const zh: Translations = {
     },
     tool: {
       copyCode: '复制代码',
+      runInTerminal: '在终端中运行',
       renderingImage: '正在渲染图片',
       copyOutput: '复制输出',
       copyCommand: '复制命令',

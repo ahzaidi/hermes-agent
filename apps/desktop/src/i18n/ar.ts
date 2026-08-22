@@ -2274,6 +2274,9 @@ export const ar = defineLocale({
       cron: 'المهام',
       openCron: 'فتح المهام المجدولة',
       turnRunning: 'الدور يعمل',
+      tokenRate: rate => `${rate} tok/s`,
+      tokenRateTitle: 'عدد الرموز المخرجة في الثانية (هذه الجولة)',
+      toggleTokenRate: 'سرعة الرموز',
       contextUsage: 'استخدام السياق',
       session: 'الجلسة',
       yoloOn: 'YOLO مفعل',
@@ -2572,6 +2575,7 @@ export const ar = defineLocale({
     },
     tool: {
       copyCode: 'نسخ الكود',
+      runInTerminal: 'تشغيل في الطرفية',
       renderingImage: 'جار عرض الصورة...',
       copyOutput: 'نسخ الإخراج',
       copyCommand: 'نسخ الأمر',

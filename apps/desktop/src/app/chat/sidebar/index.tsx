@@ -5,6 +5,7 @@ import type * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 
+import { $pinDropActive } from '@/app/chat/session-drag'
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
@@ -372,6 +373,7 @@ export function ChatSidebar({
   const sortOrderIds = useStore($sidebarSessionRankIds)
   const agentsGrouped = grouping === 'project'
   const pinnedSessionIds = useStore($pinnedSessionIds)
+  const pinDropActive = useStore($pinDropActive)
   const unconfirmedPinWrites = useStore($unconfirmedPinWrites)
   const pinsOpen = useStore($sidebarPinsOpen)
   const agentsOpen = useStore($sidebarRecentsOpen)
@@ -442,6 +444,23 @@ export function ChatSidebar({
   const [messagingVisible, setMessagingVisible] = useState<Record<string, number>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const trimmedQuery = searchQuery.trim()
+
+  // A click on sidebar space that ISN'T a session row drops the selection —
+  // the empty area below the list, a section header, the nav. Row clicks are
+  // excluded because they carry their own gestures, and menus/dialogs because
+  // the bulk verbs live there: clearing on the way to "Archive 7 chats" would
+  // cancel the very thing being clicked.
+  const onSidebarPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (
+      (event.target as HTMLElement).closest(
+        '[data-session-row], [data-row-actions], [role="menu"], [role="dialog"], [data-slot="dropdown-menu-trigger"]'
+      )
+    ) {
+      return
+    }
+
+    clearSessionSelection()
+  }, [])
 
   // Esc drops the multi-selection. Capture phase and unconditional: the
   // selection is a sidebar-wide mode, so it must not depend on where focus
@@ -1481,6 +1500,7 @@ export function ChatSidebar({
         'border-(--sidebar-edge-border) bg-(--ui-sidebar-surface-background) opacity-100'
       )}
       collapsible="none"
+      onPointerDown={onSidebarPointerDown}
     >
       <SidebarContent className="gap-0 overflow-hidden bg-transparent px-2.5">
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
@@ -1629,6 +1649,17 @@ export function ChatSidebar({
             )}
 
             {!trimmedQuery && (
+              // The drop tray for "drag a chat up here to pin it". The
+              // attribute is what session-drag.ts hit-tests (the sidebar is no
+              // layout zone, so the generic drop overlay can't light it), and
+              // the ring is the accept feedback while a drag hovers.
+              <div
+                className={cn(
+                  'shrink-0 rounded-lg transition-colors',
+                  pinDropActive && 'bg-(--ui-row-active-background) inset-ring-1 inset-ring-(--ui-accent)'
+                )}
+                data-session-pin-drop=""
+              >
               <SidebarSessionsSection
                 activeSessionId={activeSidebarSessionId}
                 contentClassName="flex flex-col gap-px rounded-lg pb-2 pt-1"
@@ -1650,6 +1681,7 @@ export function ChatSidebar({
                 showProfileTags={showAllProfiles}
                 sortable={pinnedSessions.length > 1}
               />
+              </div>
             )}
 
             {!trimmedQuery && (

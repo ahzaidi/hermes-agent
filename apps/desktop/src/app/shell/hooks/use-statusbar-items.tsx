@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { ConnectionSwitcher } from '@/app/chat/sidebar/connection-switcher'
@@ -16,6 +16,7 @@ import { displayPath, pathLeaf } from '@/lib/display-path'
 import { Activity, AlertCircle, Clock, Command, FolderOpen, Globe, Hash, Loader2, Terminal } from '@/lib/icons'
 import { runtimeReadinessDisplay, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { contextBarLabel, LiveDuration, usageContextLabel } from '@/lib/statusbar'
+import { advanceTokenRate, IDLE_TOKEN_RATE } from '@/lib/token-rate'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'
 import { resolveVersionStatus } from '@/lib/version-status'
@@ -263,6 +264,19 @@ export function useStatusbarItems({
         : currentUsage,
     [contextBreakdown, currentUsage]
   )
+
+  // Output throughput for the current (or last) turn. Sampled off the live
+  // `session.usage` ticks rather than timed in the renderer: the ticks are the
+  // only place the real token counts appear, and counting rendered characters
+  // would measure our own paint loop instead of the model.
+  const outputTokens = currentUsage.output
+  const [tokenRateState, setTokenRateState] = useState(IDLE_TOKEN_RATE)
+
+  useEffect(() => {
+    setTokenRateState(previous => advanceTokenRate(previous, { busy, now: Date.now(), output: outputTokens }))
+  }, [busy, outputTokens])
+
+  const tokenRate = tokenRateState.rate
 
   const contextUsage = useMemo(() => usageContextLabel(gaugeUsage), [gaugeUsage])
   const contextBar = useMemo(() => contextBarLabel(gaugeUsage), [gaugeUsage])
@@ -545,6 +559,14 @@ export function useStatusbarItems({
         variant: 'text'
       },
       {
+        hidden: tokenRate == null,
+        id: 'token-rate',
+        label: copy.tokenRate(Math.round(tokenRate ?? 0)),
+        title: copy.tokenRateTitle,
+        toggleLabel: copy.toggleTokenRate,
+        variant: 'text'
+      },
+      {
         detail: contextBar || undefined,
         hidden: !contextUsage,
         id: 'context-usage',
@@ -599,6 +621,7 @@ export function useStatusbarItems({
       sessionStartedAt,
       gatewayState,
       terminalShowing,
+      tokenRate,
       turnStartedAt
     ]
   )

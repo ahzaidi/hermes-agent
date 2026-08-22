@@ -2548,6 +2548,9 @@ export const ja = defineLocale({
       starmap: 'メモリグラフ',
       openStarmap: 'メモリグラフを開く',
       turnRunning: '実行中',
+      tokenRate: rate => `${rate} tok/s`,
+      tokenRateTitle: '1 秒あたりの出力トークン数（このターン）',
+      toggleTokenRate: 'トークン速度',
       contextUsage: 'コンテキスト使用状況',
       contextUsagePanel: {
         categories: {
@@ -2878,6 +2881,7 @@ export const ja = defineLocale({
     },
     tool: {
       copyCode: 'コードをコピー',
+      runInTerminal: 'ターミナルで実行',
       renderingImage: '画像をレンダリング中',
       copyOutput: '出力をコピー',
       copyCommand: 'コマンドをコピー',

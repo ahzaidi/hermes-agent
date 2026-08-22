@@ -2894,6 +2894,9 @@ export const en: Translations = {
       starmap: 'Memory Graph',
       openStarmap: 'Open memory graph',
       turnRunning: 'Running',
+      tokenRate: rate => `${rate} tok/s`,
+      tokenRateTitle: 'Output tokens per second (this turn)',
+      toggleTokenRate: 'Token speed',
       contextUsage: 'Context usage',
       contextUsagePanel: {
         categories: {
@@ -3251,6 +3254,7 @@ export const en: Translations = {
     },
     tool: {
       copyCode: 'Copy code',
+      runInTerminal: 'Run in terminal',
       renderingImage: 'Rendering image',
       copyOutput: 'Copy output',
       copyCommand: 'Copy command',

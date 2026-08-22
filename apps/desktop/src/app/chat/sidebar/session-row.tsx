@@ -387,6 +387,10 @@ function SidebarSessionRowImpl({
           className
         )}
         data-glass-opaque={dragging ? '' : undefined}
+        // Marks this subtree as "a session row" for the sidebar's
+        // click-outside-clears handler (index.tsx) — a click that lands on a
+        // row is the row's own gesture, never a deselect.
+        data-session-row=""
         data-working={liveTurn ? 'true' : undefined}
         // The row runs BOTH drags off one press, and each declines outside its
         // own region — so no timing/arbitration rule is needed and neither can

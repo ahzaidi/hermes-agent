@@ -2461,6 +2461,10 @@ export interface Translations {
       starmap: string
       openStarmap: string
       turnRunning: string
+      /** Live output throughput, e.g. "42 tok/s". */
+      tokenRate: (rate: number) => string
+      tokenRateTitle: string
+      toggleTokenRate: string
       contextUsage: string
       contextUsagePanel: {
         categories: {
@@ -2810,6 +2814,7 @@ export interface Translations {
     }
     tool: {
       copyCode: string
+      runInTerminal: string
       renderingImage: string
       copyOutput: string
       copyCommand: string
