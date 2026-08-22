@@ -731,6 +731,56 @@ export function unpinSession(sessionId: string) {
   )
 }
 
+// Drop several pins in ONE read-modify-write, returning what `restoreSessionPins`
+// needs to undo it. Deliberately reads the CURRENT list rather than taking a
+// snapshot the caller holds across an await: two bulk rows unpinning in parallel
+// would each write back their own pre-await snapshot, so the later write
+// resurrects the pin the earlier one dropped. That clobber is the reason the
+// sidebar's bulk archive/delete used to run strictly one row at a time.
+export function dropSessionPins(sessionIds: Array<null | string | undefined>): Array<[string, number]> {
+  const doomed = new Set(
+    sessionIds.map(id => id?.trim()).filter((id): id is string => Boolean(id))
+  )
+
+  if (!doomed.size) {
+    return []
+  }
+
+  const removed: Array<[string, number]> = []
+  const next = $pinnedSessionIds.get().filter((id, index) => {
+    if (!doomed.has(id)) {
+      return true
+    }
+
+    removed.push([id, index])
+
+    return false
+  })
+
+  if (removed.length) {
+    setOrderIds($pinnedSessionIds, next)
+  }
+
+  return removed
+}
+
+// Undo `dropSessionPins` on a failed mutation, each pin back at the index it
+// held. Clamped to the current length because a concurrent row may have shortened
+// the list since — better a pin at the end than a hole in the order.
+export function restoreSessionPins(removed: ReadonlyArray<[string, number]>): void {
+  if (!removed.length) {
+    return
+  }
+
+  let next = $pinnedSessionIds.get()
+
+  for (const [id, index] of removed) {
+    next = insertUniqueId(next, id, Math.min(index, next.length))
+  }
+
+  setOrderIds($pinnedSessionIds, next)
+}
+
 // Apply a new pinned order from a drag. The dragged list only holds the pins
 // that currently RESOLVE to a loaded row, so this is a permutation of a subset:
 // re-slot the ids it names into the positions they already occupied, leaving

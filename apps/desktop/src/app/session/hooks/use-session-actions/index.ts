@@ -24,7 +24,7 @@ import { migrateSessionDraft } from '@/store/composer'
 import { clearQueuedPrompts, migrateQueuedPrompts } from '@/store/composer-queue'
 import { openGatewayForAgent, openGatewayForProfile, requestGatewayForAgent } from '@/store/gateway'
 import { $gatewaySwitching } from '@/store/gateway-switch'
-import { $pinnedSessionIds } from '@/store/layout'
+import { dropSessionPins, restoreSessionPins } from '@/store/layout'
 import { clearNotifications, notify, notifyError } from '@/store/notifications'
 import {
   $activeGatewayProfile,
@@ -101,7 +101,7 @@ import {
 } from '@/store/session-states'
 import { broadcastSessionsChanged } from '@/store/session-sync'
 import { forgetSessionUnread } from '@/store/session-unread'
-import { $archivedSessions } from '@/store/sidebar-archive'
+import { $archivedSessions, dropArchivedSession, restoreArchivedSession } from '@/store/sidebar-archive'
 import { dropTranscriptTail, loadTranscriptTail, saveTranscriptTail } from '@/store/transcript-tail-cache'
 import { isWatchWindow } from '@/store/windows'
 import type { SessionCreateResponse, SessionMessage, SessionResumeResponse, UsageStats } from '@/types/hermes'
@@ -135,6 +135,11 @@ import {
   toBranchMessages,
   upsertOptimisticSession
 } from './utils'
+
+// How many rows of a bulk archive/delete may have their RPC in flight at once.
+// Enough that a normal selection finishes in one wave, low enough that selecting
+// a hundred rows doesn't open a hundred sockets against the backend.
+const BULK_SESSION_CONCURRENCY = 6
 
 interface SessionActionsOptions {
   activeSessionId: string | null
@@ -1939,30 +1944,26 @@ export function useSessionActions({
       const wasSelected = selectedStoredSessionId === storedSessionId
       const closingRuntimeId = wasSelected ? activeSessionId : null
       const previousMessages = $messages.get()
-      const previousPinned = $pinnedSessionIds.get()
-
       const removedOwner: SessionOwnerScope = removed?.connection_id
         ? {
             connectionId: removed.connection_id,
             profile: removed.profile || 'default'
           }
         : removed?.profile
-
-      const previousArchived = $archivedSessions.get()
       // Pins are keyed on the durable lineage-root id; the stored id may be the
       // live tip after compression. Drop both so the pin can't linger.
       const removedPinId = removed ? sessionPinId(removed) : storedSessionId
       const removedIds = [storedSessionId, removed?.id, removed?._lineage_root_id]
 
       setSessions(prev => prev.filter(session => !sessionMatchesStoredId(session, storedSessionId)))
-      $archivedSessions.set(previousArchived.filter(session => !sessionMatchesStoredId(session, storedSessionId)))
+      const droppedArchived = dropArchivedSession(storedSessionId)
       // Evict from the project tree's optimistic layer too (the backend snapshot
       // still lists it until its next refresh), so grouped + flat views drop the
       // row in lockstep. Pin the tombstone against the projects.tree prune while
       // the delete RPC is in flight, so a racing refresh can't flash it back.
       tombstoneSessions(removedIds)
       beginSessionMutation(removedIds)
-      $pinnedSessionIds.set(previousPinned.filter(id => id !== storedSessionId && id !== removedPinId))
+      const droppedPins = dropSessionPins([storedSessionId, removedPinId])
 
       // Tear down before awaiting so the route effect can't resume the
       // doomed session via the stale /<sid> URL.
@@ -2008,10 +2009,10 @@ export function useSessionActions({
         }
 
         // Restore the archived-view row too (no-op when it wasn't archived).
-        $archivedSessions.set(previousArchived)
+        restoreArchivedSession(droppedArchived)
 
         untombstoneSessions(removedIds)
-        $pinnedSessionIds.set(previousPinned)
+        restoreSessionPins(droppedPins)
 
         if (wasSelected) {
           setFreshDraftReady(false)
@@ -2070,7 +2071,6 @@ export function useSessionActions({
 
       const archived = $sessions.get().find(session => sessionMatchesStoredId(session, storedSessionId))
       const wasSelected = selectedStoredSessionId === storedSessionId
-      const previousPinned = $pinnedSessionIds.get()
       // Pins are keyed on the durable lineage-root id; the stored id may be the
       // live tip after compression. Drop both so the pin can't linger.
       const archivedPinId = archived ? sessionPinId(archived) : storedSessionId
@@ -2080,7 +2080,7 @@ export function useSessionActions({
       setSessions(prev => prev.filter(session => !sessionMatchesStoredId(session, storedSessionId)))
       tombstoneSessions(archivedIds)
       beginSessionMutation(archivedIds)
-      $pinnedSessionIds.set(previousPinned.filter(id => id !== storedSessionId && id !== archivedPinId))
+      const droppedPins = dropSessionPins([storedSessionId, archivedPinId])
 
       if (wasSelected) {
         startFreshSessionDraft(true)
@@ -2112,7 +2112,7 @@ export function useSessionActions({
         }
 
         untombstoneSessions(archivedIds)
-        $pinnedSessionIds.set(previousPinned)
+        restoreSessionPins(droppedPins)
 
         if (opts?.quiet) {
           console.warn('archive failed', err)
@@ -2133,10 +2133,16 @@ export function useSessionActions({
   // failure inside a selection of twenty costs only its own row — and one
   // summary toast replaces twenty.
   //
-  // Sequential on purpose: each single-row call snapshots $pinnedSessionIds and
-  // writes it back, so running them concurrently would let one call's snapshot
-  // clobber another's un-pin. The optimistic eviction is synchronous, so the
-  // list still empties instantly however long the RPCs take.
+  // Bounded-concurrent, not sequential. Each row is one PATCH on the default 15s
+  // fetch timeout, so a strictly serial loop over ten selected rows could sit for
+  // two and a half minutes against an alive-but-busy backend with no progress and
+  // no cancel — indistinguishable from a frozen app, and reported as one. What
+  // forced the serial loop was snapshot-clobber: every row read $pinnedSessionIds
+  // (and $archivedSessions) BEFORE its await and wrote the whole snapshot back
+  // after, so a parallel sibling's un-pin came back from the dead. Those two
+  // stores are read-modify-write now (`dropSessionPins`, `dropArchivedSession`),
+  // which is what makes running rows together safe. The cap stops a large
+  // selection opening one socket per row.
   const runBulk = useCallback(
     async (
       sessionIds: readonly string[],
@@ -2154,12 +2160,22 @@ export function useSessionActions({
       clearSessionSelection()
 
       let failed = 0
+      let cursor = 0
 
-      for (const id of ids) {
-        if (!(await run(id))) {
-          failed += 1
+      // Hand-rolled worker pool: each worker claims the next id and runs it to
+      // completion. `cursor++` is safe without a lock — nothing awaits between
+      // the read and the increment.
+      const worker = async (): Promise<void> => {
+        while (cursor < ids.length) {
+          const id = ids[cursor++]
+
+          if (!(await run(id))) {
+            failed += 1
+          }
         }
       }
+
+      await Promise.all(Array.from({ length: Math.min(BULK_SESSION_CONCURRENCY, ids.length) }, worker))
 
       pruneSessionSelection(ids)
 
