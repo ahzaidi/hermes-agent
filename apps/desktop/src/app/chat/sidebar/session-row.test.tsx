@@ -9,6 +9,12 @@ import type * as ChatRuntime from '@/lib/chat-runtime'
 import type * as Time from '@/lib/time'
 import type * as ComposerStatusStore from '@/store/composer-status'
 import type * as SessionStore from '@/store/session'
+import {
+  $selectedSessionIds,
+  clearSessionSelection,
+  registerSessionRowOrder,
+  toggleSessionSelection
+} from '@/store/session-selection'
 import { clearAllSessionStates, publishSessionState } from '@/store/session-states'
 import type * as SessionStatesStore from '@/store/session-states'
 import type * as WindowsStore from '@/store/windows'
@@ -422,5 +428,83 @@ describe('Inbox-style session card', () => {
 
     expect(workspace.className).toMatch(/\btruncate\b/)
     expect(screen.getByText('133 messages')).toBeTruthy()
+  })
+})
+
+// The gestures the sidebar's multi-select is driven by. Asserted through the
+// rendered row (not just the resolver) because the row is where the click,
+// the scope and the store meet — the wiring, not the precedence.
+describe('SidebarSessionRow selection gestures', () => {
+  afterEach(() => {
+    clearSessionSelection()
+  })
+
+  const rowFor = (title: string) => screen.getByText(title)
+
+  const renderScoped = (session: SessionInfo, onResume = vi.fn()) =>
+    render(
+      <SidebarSessionRow
+        isPinned={false}
+        isSelected={false}
+        onArchive={noop}
+        onDelete={noop}
+        onPin={noop}
+        onResume={onResume}
+        onToggleUnread={noop}
+        selectionScope="test"
+        session={session}
+        unread={false}
+      />
+    )
+
+  it('toggles this row into the selection on ⌘/⌃-click', () => {
+    renderScoped(makeSession({ id: 'b', title: 'Second' }))
+
+    fireEvent.click(rowFor('Second'), { ctrlKey: true })
+    expect($selectedSessionIds.get()).toEqual(['b'])
+
+    fireEvent.click(rowFor('Second'), { ctrlKey: true })
+    expect($selectedSessionIds.get()).toEqual([])
+  })
+
+  it('extends the selection to this row on ⇧-click, using the section order', () => {
+    registerSessionRowOrder('test', ['a', 'b', 'c', 'd'])
+    toggleSessionSelection('test', 'a')
+    renderScoped(makeSession({ id: 'c', title: 'Third' }))
+
+    fireEvent.click(rowFor('Third'), { shiftKey: true })
+    expect($selectedSessionIds.get()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('resumes and clears the selection on a plain click', () => {
+    const onResume = vi.fn()
+    toggleSessionSelection('test', 'a')
+    renderScoped(makeSession({ id: 'b', title: 'Plain' }), onResume)
+
+    fireEvent.click(rowFor('Plain'))
+    expect(onResume).toHaveBeenCalledOnce()
+    expect($selectedSessionIds.get()).toEqual([])
+  })
+
+  it('archives on ⌥+⇧-click instead of selecting', () => {
+    const onArchive = vi.fn()
+    render(
+      <SidebarSessionRow
+        isPinned={false}
+        isSelected={false}
+        onArchive={onArchive}
+        onDelete={noop}
+        onPin={noop}
+        onResume={noop}
+        onToggleUnread={noop}
+        selectionScope="test"
+        session={makeSession({ id: 'b', title: 'Archivable' })}
+        unread={false}
+      />
+    )
+
+    fireEvent.click(rowFor('Archivable'), { altKey: true, shiftKey: true })
+    expect(onArchive).toHaveBeenCalledOnce()
+    expect($selectedSessionIds.get()).toEqual([])
   })
 })

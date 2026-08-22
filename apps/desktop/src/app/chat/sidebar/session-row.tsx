@@ -30,6 +30,12 @@ import { $projects } from '@/store/projects'
 import { $pullRequestsByBranch, sessionPrKey } from '@/store/pull-requests'
 import { $sessionDotStateById, hasLiveTurn, showsRunningArc } from '@/store/session-dot-state'
 import { $sessionListDensity } from '@/store/session-list-density'
+import {
+  $selectedSessionIds,
+  clearSessionSelection,
+  selectSessionRange,
+  toggleSessionSelection
+} from '@/store/session-selection'
 import { $openStoredSessionIds } from '@/store/session-states'
 import { sessionCostUsd } from '@/store/sidebar-archive'
 import { $todoProgressBySession } from '@/store/todos'
@@ -77,6 +83,10 @@ interface SidebarSessionRowProps extends React.ComponentProps<'div'> {
    *  model · size footer. The flat recents list opts in via the filter menu;
    *  dense tree surfaces (projects, messaging, pins) keep the one-line row. */
   card?: boolean
+  /** Which list this row belongs to, for ⇧-click range selection. Ranges never
+   *  cross a scope boundary — see `selectSessionRange`. Surfaces that don't
+   *  register a row order (project lanes) still get ⌘/⌃-click toggling. */
+  selectionScope?: string
 }
 
 const AGE_KEY = { day: 'ageDay', hour: 'ageHour', minute: 'ageMin' } as const
@@ -137,6 +147,7 @@ function SidebarSessionRowImpl({
   dragHandleProps,
   showProfile = false,
   card = false,
+  selectionScope = 'sessions',
   className,
   style,
   ref,
@@ -163,6 +174,9 @@ function SidebarSessionRowImpl({
   // rather than threaded as props: the subscription re-renders past the memo
   // below, and a toggle should repaint every row at once anyway.
   const rowMeta = useStore($sidebarRowMeta)
+  // Multi-select membership. A selector, not a plain useStore: the row repaints
+  // when ITS own membership flips, not on every other row's toggle.
+  const isMultiSelected = useStoreSelector($selectedSessionIds, ids => ids.includes(session.id))
   // Pinned metadata occupies the actions slot and swaps out for the kebab on
   // hover, so the row reserves the same width either way and never reflows.
   const pinnedAge = rowMeta.includes('updated')
@@ -358,6 +372,9 @@ function SidebarSessionRowImpl({
           !card && density !== 'compact' && 'min-h-[2.75rem]',
           !card && density === 'detailed' && 'min-h-[3.875rem]',
           isSelected && 'bg-(--ui-row-active-background)',
+          // Multi-selected: the active band plus an inset ring, so a
+          // selection of many rows never reads as many open sessions.
+          isMultiSelected && 'bg-(--ui-row-active-background) inset-ring-1 inset-ring-(--ui-accent)',
           // Open in another pane: the SAME band, just weaker. Its own mixed
           // token rather than row opacity — dimming the whole row would take
           // the title and the status dot down with it.
@@ -426,18 +443,17 @@ function SidebarSessionRowImpl({
           })}
           onClick={event => {
             // Modifier-click gestures on a row (see `resolveSessionRowClick`):
-            //   ⇧          → pin / unpin
-            //   ⌘/⌃        → open in a new tab (stack into main)
-            //   ⌘/⌃ + ⇧    → pop into its own window (needs standalone windows)
+            //   ⇧          → extend the multi-selection to this row
+            //   ⌘/⌃        → add / remove this row from the multi-selection
             //   ⌥ + ⇧      → archive
-            // A plain click resumes. Archive also lives in the row's ⋯ and
-            // right-click menus and as a rebindable hotkey (`session.archive`).
-            // `openSession`'s 'window' intent already falls back to 'tab' when
-            // the bridge lacks standalone windows, so the resolver can always
-            // offer the window action here.
-            const action = resolveSessionRowClick(event, { canOpenWindow: true })
+            // A plain click clears the selection and resumes. Pin and
+            // open-in-new-tab used to own ⇧ and ⌘/⌃; both are still in the row's
+            // ⋯ and right-click menus, and middle-click still opens a new tab.
+            // Archive is also a rebindable hotkey (`session.archive`).
+            const action = resolveSessionRowClick(event)
 
             if (action === 'resume') {
+              clearSessionSelection()
               onResume()
 
               return
@@ -449,12 +465,10 @@ function SidebarSessionRowImpl({
 
             if (action === 'archive') {
               onArchive()
-            } else if (action === 'pin') {
-              onPin()
-            } else if (action === 'newTab') {
-              openSession(session.id, () => undefined, 'tab')
+            } else if (action === 'selectRange') {
+              selectSessionRange(selectionScope, session.id)
             } else {
-              openSession(session.id, () => undefined, 'window')
+              toggleSessionSelection(selectionScope, session.id)
             }
           }}
         >
@@ -624,6 +638,7 @@ function rowPropsEqual(a: SidebarSessionRowProps, b: SidebarSessionRowProps): bo
     a.dragging === b.dragging &&
     a.showProfile === b.showProfile &&
     a.card === b.card &&
+    a.selectionScope === b.selectionScope &&
     a.dragHandleProps === b.dragHandleProps &&
     a.className === b.className &&
     a.style === b.style

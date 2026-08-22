@@ -1909,6 +1909,12 @@ export interface Translations {
       hideTabBar: string
       openInNewTab: string
       openInSplit: string
+      /** Bulk verbs for the sidebar's multi-selection (⇧ / ⌘-⌃ click). */
+      archiveSelected: (count: number) => string
+      deleteSelected: (count: number) => string
+      deleteSelectedTitle: (count: number) => string
+      deleteSelectedDesc: (count: number) => string
+      clearSelection: string
       copyIdFailed: string
       sessionActions: string
       sessionRunning: string
@@ -2906,6 +2912,10 @@ export interface Translations {
     deleteFailed: string
     archived: string
     archiveFailed: string
+    archivedMany: (count: number) => string
+    archiveFailedMany: (count: number) => string
+    deletedMany: (count: number) => string
+    deleteFailedMany: (count: number) => string
     cwdChangeFailed: string
     cwdStagedTitle: string
     cwdStagedMessage: string

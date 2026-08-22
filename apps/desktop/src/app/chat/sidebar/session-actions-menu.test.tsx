@@ -2,6 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { atom } from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  clearSessionSelection,
+  registerBulkSessionActions,
+  toggleSessionSelection
+} from '@/store/session-selection'
+
 import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
 
 afterEach(cleanup)
@@ -45,6 +51,11 @@ vi.mock('@/i18n', () => ({
         },
         row: {
           archive: 'Archive',
+          archiveSelected: (count: number) => `Archive ${count} chats`,
+          clearSelection: 'Clear selection',
+          deleteSelected: (count: number) => `Delete ${count} chats`,
+          deleteSelectedDesc: (count: number) => `This will delete ${count} chats.`,
+          deleteSelectedTitle: (count: number) => `Delete ${count} chats?`,
           branchFrom: 'Branch from here',
           copyId: 'Copy ID',
           copyIdFailed: 'Failed to copy ID',
@@ -284,5 +295,89 @@ describe('SessionActionsMenu', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
     expect(await screen.findByText('Session deleted')).toBeTruthy()
     expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Multi-select: the destructive verbs switch from "this row" to "the selection"
+// when the row is part of one, and only then. The bulk calls arrive through the
+// store (registerBulkSessionActions), which is what the wiring layer does.
+describe('SessionActionsMenu bulk verbs', () => {
+  afterEach(() => {
+    clearSessionSelection()
+    registerBulkSessionActions(null)
+  })
+
+  const openMenu = async () => {
+    const trigger = screen.getByRole('button', { name: 'Session actions' })
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.pointerUp(trigger, { button: 0, pointerType: 'mouse' })
+    fireEvent.click(trigger)
+
+    return await screen.findByRole('menu')
+  }
+
+  it('archives the whole selection when the row is part of it', async () => {
+    const archive = vi.fn()
+    const onArchive = vi.fn()
+    registerBulkSessionActions({ archive, remove: vi.fn() })
+    toggleSessionSelection('recents', 's1')
+    toggleSessionSelection('recents', 's2')
+
+    render(
+      <SessionActionsMenu onArchive={onArchive} sessionId="s1" title="My session">
+        <button aria-label="Session actions" type="button">
+          ⋮
+        </button>
+      </SessionActionsMenu>
+    )
+
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive 2 chats' }))
+
+    expect(archive).toHaveBeenCalledWith(['s1', 's2'])
+    expect(onArchive).not.toHaveBeenCalled()
+  })
+
+  it('stays a single-row menu for a row outside the selection', async () => {
+    registerBulkSessionActions({ archive: vi.fn(), remove: vi.fn() })
+    toggleSessionSelection('recents', 's2')
+    toggleSessionSelection('recents', 's3')
+
+    render(
+      <SessionActionsMenu sessionId="s1" title="My session">
+        <button aria-label="Session actions" type="button">
+          ⋮
+        </button>
+      </SessionActionsMenu>
+    )
+
+    await openMenu()
+
+    expect(screen.getByRole('menuitem', { name: 'Archive' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /Archive 2 chats/ })).toBeNull()
+  })
+
+  it('counts the selection in the delete confirm instead of naming one chat', async () => {
+    const remove = vi.fn()
+    registerBulkSessionActions({ archive: vi.fn(), remove })
+    toggleSessionSelection('recents', 's1')
+    toggleSessionSelection('recents', 's2')
+
+    render(
+      <SessionActionsMenu sessionId="s1" title="My session">
+        <button aria-label="Session actions" type="button">
+          ⋮
+        </button>
+      </SessionActionsMenu>
+    )
+
+    await openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete 2 chats' }))
+
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.getByText('This will delete 2 chats.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(remove).toHaveBeenCalledWith(['s1', 's2'])
   })
 })

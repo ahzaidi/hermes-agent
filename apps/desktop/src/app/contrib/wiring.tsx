@@ -80,6 +80,7 @@ import {
   setMessages
 } from '@/store/session'
 import { requestForSessionProfile, type SessionOwnerScope } from '@/store/session-request-router'
+import { registerBulkSessionActions } from '@/store/session-selection'
 import { $focusedStoredSessionId, sessionTileOwnerRoute, storedSessionIdForRuntimeId } from '@/store/session-states'
 import { clearSessionTodos, setSessionTodos, todosForHydration } from '@/store/todos'
 import { armWakeWord, stopClientCapture } from '@/store/wake-word'
@@ -547,11 +548,13 @@ export function ContribWiring({ children }: { children: ReactNode }) {
 
   const {
     archiveSession,
+    archiveSessions,
     branchCurrentSession,
     branchStoredSession,
     createBackendSessionForSend,
     openNewSessionTile,
     removeSession,
+    removeSessions,
     resumeSession,
     selectSidebarItem,
     startFreshSessionDraft
@@ -718,6 +721,18 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     selectedStoredSessionId,
     submitText
   })
+
+  // The sidebar's multi-select verbs. Published through the store rather than
+  // threaded down: the row menu that offers them is four prop layers below, and
+  // they act on the STORE's selection, not on the row they were invoked from.
+  useEffect(() => {
+    registerBulkSessionActions({
+      archive: ids => void archiveSessions(ids),
+      remove: ids => void removeSessions(ids)
+    })
+
+    return () => registerBulkSessionActions(null)
+  }, [archiveSessions, removeSessions])
 
   // Session-tile delegate (resume/submit/interrupt/slash + the session verbs
   // the tile TAB menu needs, without touching the primary view).
@@ -1246,7 +1261,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
           <CommandCenterView
             initialSection={commandCenterInitialSection}
             onClose={closeOverlayToPreviousRoute}
-            onDeleteSession={removeSession}
+            onDeleteSession={async sessionId => {
+              await removeSession(sessionId)
+            }}
             onNavigateRoute={path => navigateToWorkspacePage(navigate, path)}
             onOpenSession={sessionId => openSession(sessionId, navigate)}
           />

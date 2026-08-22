@@ -44,6 +44,7 @@ import {
   setSessions
 } from '@/store/session'
 import { $sessionColorOverrides, setSessionColorOverride } from '@/store/session-color'
+import { $bulkSessionActions, $selectedSessionIds, clearSessionSelection } from '@/store/session-selection'
 import { $sessionTiles } from '@/store/session-states'
 import { ackStoredSessionId } from '@/store/session-unread'
 import { canOpenSessionInTerminal, canOpenSessionWindow, openSessionInTerminal } from '@/store/windows'
@@ -215,6 +216,16 @@ function useSessionActions({
   // The row's finished-unread dot is cleared by opening the session (main or
   // tile) — this menu item is the explicit escape hatch for the rest.
   const isUnread = useStore($unreadFinishedSessionIds).includes(sessionId)
+
+  // Multi-select: when this row is part of a selection of more than one, the
+  // destructive verbs act on the whole selection instead of just this row.
+  // Read from the store so no surface has to thread the selection down, and
+  // gated on membership — right-clicking a row OUTSIDE the selection is a
+  // single-row menu, the same rule Explorer and Finder use.
+  const selectedIds = useStore($selectedSessionIds)
+  const bulkActions = useStore($bulkSessionActions)
+  const bulkIds = selectedIds.includes(sessionId) && selectedIds.length > 1 ? selectedIds : null
+  const bulkCount = bulkIds?.length ?? 0
 
   // Already showing as a tab somewhere (a tile, or loaded in main — main IS
   // a tab): offering "Open in new tab" again is noise.
@@ -426,19 +437,26 @@ function useSessionActions({
   // DANGER — put it away / destroy it (delete stays last, destructive-red).
   const dangerItems: ActionItemSpec[] = [
     spec({
-      disabled: !onArchive,
+      disabled: bulkIds ? !bulkActions : !onArchive,
       icon: 'archive',
-      label: r.archive,
+      label: bulkIds ? r.archiveSelected(bulkCount) : r.archive,
       onSelect: () => {
         triggerHaptic('selection')
+
+        if (bulkIds) {
+          bulkActions?.archive(bulkIds)
+
+          return
+        }
+
         onArchive?.()
       }
     }),
     {
       className: 'text-destructive focus:text-destructive',
-      disabled: !onDelete,
+      disabled: bulkIds ? !bulkActions : !onDelete,
       icon: 'trash',
-      label: t.common.delete,
+      label: bulkIds ? r.deleteSelected(bulkCount) : t.common.delete,
       onSelect: () => {
         triggerHaptic('warning')
 
@@ -446,8 +464,9 @@ function useSessionActions({
         // fire instantly on click). Gate it behind an explicit confirm — see
         // #61470. The dialog owns the delete call, so every surface that routes
         // through this menu (sidebar rows, tab menus, the chat header) gets the
-        // guard for free.
-        if (onDelete) {
+        // guard for free. A bulk delete is gated by the same dialog, counting
+        // the selection instead of naming one chat.
+        if (onDelete || (bulkIds && bulkActions)) {
           setDeleteOpen(true)
         }
       },
@@ -496,6 +515,20 @@ function useSessionActions({
           {tabItems.map(item => renderActionItem(kit, item))}
         </>
       )}
+      {bulkIds && (
+        <>
+          <kit.Separator />
+          {renderActionItem(kit, {
+            disabled: false,
+            icon: 'clear-all',
+            label: r.clearSelection,
+            onSelect: () => {
+              triggerHaptic('selection')
+              clearSessionSelection()
+            }
+          })}
+        </>
+      )}
       <kit.Separator />
       {dangerItems.map(item => renderActionItem(kit, item))}
       {onHideTabBar && (
@@ -537,10 +570,17 @@ function useSessionActions({
   const deleteDialog = (
     <DeleteSessionDialog
       onConfirm={() => {
+        if (bulkIds) {
+          bulkActions?.remove(bulkIds)
+
+          return
+        }
+
         onDelete?.()
       }}
       onOpenChange={setDeleteOpen}
       open={deleteOpen}
+      selectionCount={bulkCount}
       sessionTitle={title}
     />
   )
@@ -553,6 +593,8 @@ interface DeleteSessionDialogProps {
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
   sessionTitle: string
+  /** >1 when the menu is acting on a multi-selection: count it, don't name it. */
+  selectionCount?: number
 }
 
 // Thin wrapper over ConfirmDialog — the single choke point for every session
@@ -560,21 +602,28 @@ interface DeleteSessionDialogProps {
 // session is irreversible and the desktop used to fire it instantly on click
 // (#61470); this mirrors the CLI's y/N guard. onConfirm is the fire-and-forget
 // delete call; ConfirmDialog owns the busy/done beat and Enter-to-confirm.
-function DeleteSessionDialog({ open, onOpenChange, onConfirm, sessionTitle }: DeleteSessionDialogProps) {
+function DeleteSessionDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  sessionTitle,
+  selectionCount = 0
+}: DeleteSessionDialogProps) {
   const { t } = useI18n()
   const r = t.sidebar.row
+  const bulk = selectionCount > 1
 
   return (
     <ConfirmDialog
       busyLabel={r.deleting}
       confirmLabel={t.common.delete}
-      description={r.deleteDesc(sessionTitle)}
+      description={bulk ? r.deleteSelectedDesc(selectionCount) : r.deleteDesc(sessionTitle)}
       destructive
       doneLabel={r.deleted}
       onClose={() => onOpenChange(false)}
       onConfirm={onConfirm}
       open={open}
-      title={r.deleteTitle}
+      title={bulk ? r.deleteSelectedTitle(selectionCount) : r.deleteTitle}
     />
   )
 }

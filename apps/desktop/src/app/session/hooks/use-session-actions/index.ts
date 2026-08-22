@@ -88,6 +88,7 @@ import {
   type SessionOwnerScope,
   type SessionProfileRoute
 } from '@/store/session-request-router'
+import { clearSessionSelection, pruneSessionSelection } from '@/store/session-selection'
 import {
   $sessionTiles,
   closeSessionTile,
@@ -1920,8 +1921,10 @@ export function useSessionActions({
     [copy, forkBranch]
   )
 
+  // Same `quiet` contract as archiveSession: a bulk delete reports once for the
+  // selection instead of one toast per row, and counts the boolean results.
   const removeSession = useCallback(
-    async (storedSessionId: string) => {
+    async (storedSessionId: string, opts?: { quiet?: boolean }): Promise<boolean> => {
       clearNotifications()
 
       // The row may live in the main list OR the archived view's own store
@@ -1997,6 +2000,8 @@ export function useSessionActions({
           sessionStateByRuntimeIdRef.current.delete(tiledRuntimeId)
           dropSessionState(tiledRuntimeId)
         }
+
+        return true
       } catch (err) {
         if (removedFromMain) {
           setSessions(prev => [removedFromMain, ...prev])
@@ -2027,7 +2032,13 @@ export function useSessionActions({
           }
         }
 
-        notifyError(err, copy.deleteFailed)
+        if (opts?.quiet) {
+          console.warn('delete failed', err)
+        } else {
+          notifyError(err, copy.deleteFailed)
+        }
+
+        return false
       } finally {
         // Release the tombstone to the normal projects.tree prune now the RPC has
         // settled (kept on success — the backend has deleted it; cleared on the
@@ -2049,8 +2060,12 @@ export function useSessionActions({
     ]
   )
 
+  // `quiet` suppresses this row's own toasts so a BULK archive can report once
+  // for the whole selection (see `archiveSessions`); the return value is what
+  // the bulk caller counts, because the per-row failure is handled here and
+  // never rejects.
   const archiveSession = useCallback(
-    async (storedSessionId: string) => {
+    async (storedSessionId: string, opts?: { quiet?: boolean }): Promise<boolean> => {
       clearNotifications()
 
       const archived = $sessions.get().find(session => sessionMatchesStoredId(session, storedSessionId))
@@ -2086,7 +2101,11 @@ export function useSessionActions({
           dropSessionState(tiledRuntimeId)
         }
 
-        notify({ durationMs: 2_000, kind: 'success', message: copy.archived })
+        if (!opts?.quiet) {
+          notify({ durationMs: 2_000, kind: 'success', message: copy.archived })
+        }
+
+        return true
       } catch (err) {
         if (archived) {
           setSessions(prev => [archived, ...prev.filter(session => !sessionMatchesStoredId(session, storedSessionId))])
@@ -2094,7 +2113,14 @@ export function useSessionActions({
 
         untombstoneSessions(archivedIds)
         $pinnedSessionIds.set(previousPinned)
-        notifyError(err, copy.archiveFailed)
+
+        if (opts?.quiet) {
+          console.warn('archive failed', err)
+        } else {
+          notifyError(err, copy.archiveFailed)
+        }
+
+        return false
       } finally {
         endSessionMutation(archivedIds)
       }
@@ -2102,8 +2128,73 @@ export function useSessionActions({
     [copy, runtimeIdByStoredSessionIdRef, selectedStoredSessionId, sessionStateByRuntimeIdRef, startFreshSessionDraft]
   )
 
+  // Bulk verbs for the sidebar's multi-selection. Each id runs the SAME
+  // single-row path (optimistic eviction, tombstone, per-row rollback), so one
+  // failure inside a selection of twenty costs only its own row — and one
+  // summary toast replaces twenty.
+  //
+  // Sequential on purpose: each single-row call snapshots $pinnedSessionIds and
+  // writes it back, so running them concurrently would let one call's snapshot
+  // clobber another's un-pin. The optimistic eviction is synchronous, so the
+  // list still empties instantly however long the RPCs take.
+  const runBulk = useCallback(
+    async (
+      sessionIds: readonly string[],
+      run: (sessionId: string) => Promise<boolean>,
+      messages: { done: (count: number) => string; failed: (count: number) => string }
+    ) => {
+      const ids = [...new Set(sessionIds)]
+
+      if (ids.length === 0) {
+        return
+      }
+
+      // Selection is consumed up front: the rows are leaving the list, and a
+      // stale selection would keep offering bulk verbs for ids that are gone.
+      clearSessionSelection()
+
+      let failed = 0
+
+      for (const id of ids) {
+        if (!(await run(id))) {
+          failed += 1
+        }
+      }
+
+      pruneSessionSelection(ids)
+
+      if (failed > 0) {
+        notify({ kind: 'error', message: messages.failed(failed) })
+
+        return
+      }
+
+      notify({ durationMs: 2_000, kind: 'success', message: messages.done(ids.length) })
+    },
+    []
+  )
+
+  const archiveSessions = useCallback(
+    (sessionIds: readonly string[]) =>
+      runBulk(sessionIds, id => archiveSession(id, { quiet: true }), {
+        done: copy.archivedMany,
+        failed: copy.archiveFailedMany
+      }),
+    [archiveSession, copy, runBulk]
+  )
+
+  const removeSessions = useCallback(
+    (sessionIds: readonly string[]) =>
+      runBulk(sessionIds, id => removeSession(id, { quiet: true }), {
+        done: copy.deletedMany,
+        failed: copy.deleteFailedMany
+      }),
+    [copy, removeSession, runBulk]
+  )
+
   return {
     archiveSession,
+    archiveSessions,
     branchCurrentSession,
     branchStoredSession,
     closeSettings,
@@ -2111,6 +2202,7 @@ export function useSessionActions({
     openNewSessionTile,
     openSettings,
     removeSession,
+    removeSessions,
     resumeSession,
     selectSidebarItem,
     startFreshSessionDraft
