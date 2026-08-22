@@ -273,8 +273,10 @@ export function useStatusbarItems({
   const [tokenRateState, setTokenRateState] = useState(IDLE_TOKEN_RATE)
 
   useEffect(() => {
-    setTokenRateState(previous => advanceTokenRate(previous, { busy, now: Date.now(), output: outputTokens }))
-  }, [busy, outputTokens])
+    setTokenRateState(previous =>
+      advanceTokenRate(previous, { busy, now: Date.now(), output: outputTokens, turnStartedAt })
+    )
+  }, [busy, outputTokens, turnStartedAt])
 
   const tokenRate = tokenRateState.rate
 
