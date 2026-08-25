@@ -465,7 +465,12 @@ def _(rid, params: dict) -> dict:
                     transport = current_transport()
                     if transport is not None:
                         with live.setdefault("history_lock", threading.Lock()):
-                            live["transport"] = transport
+                            # Attach additively (fan-out): a second client
+                            # resuming this live record must not steal the
+                            # stream from the one already attached. Attaching
+                            # a live transport also un-parks a sentinel slot,
+                            # which is all #91276 needed.
+                            _attach_session_transport(live, transport)
                             live.setdefault("viewers", {})[transport] = time.time()
                     _cancel_ws_orphan_reap(live_sid)
                     history = live.get("history") or []

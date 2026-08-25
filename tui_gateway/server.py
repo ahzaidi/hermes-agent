@@ -1554,37 +1554,23 @@ def _close_sessions_for_transport(
             # Point detached sessions at the drop sentinel (NOT real stdio) so
             # _ws_session_is_orphaned recognizes them and the grace-reap can
             # actually fire; a standalone `hermes --tui` keeps real _stdio.
-            # UNLESS another window still shows the session: multi-window
-            # pop-outs all register as viewers, so on disconnect re-bind the
-            # session to the most recent surviving viewer instead of
-            # stranding the original window on the sentinel (#83716).
+            # The #83716 viewer rebind is subsumed by fan-out: pop-out windows
+            # attach into the FanoutTransport, so a session with a surviving
+            # window is never returned as clientless. The registry is still
+            # pruned so it doesn't accumulate dead transports.
             viewers = session.get("viewers")
             if viewers:
                 viewers.pop(transport, None)
-            # Revalidate under the sessions lock before stomping (#77129):
-            # between the owned-sessions snapshot above and this write, a
-            # concurrent session.resume can rebind the session to a NEW live
-            # transport. Stomping it back onto the drop sentinel here would
+            # Revalidate before stomping (#77129, kept under fan-out): between
+            # _detach_transport_from_sessions returning this session as
+            # clientless and this write, a concurrent session.resume can
+            # attach a NEW live transport. Parking the sentinel over it would
             # knock an attached client into detached state and arm an orphan
-            # reap against a session that has a live owner. If the transport
-            # already moved on to a different live transport, this disconnect
-            # has nothing left to tear down — skip the park AND the reap.
-            with _sessions_lock:
-                current = session.get("transport")
-                if (
-                    current is not transport
-                    and current is not None
-                    and not _transport_is_dead(current)
-                ):
-                    continue
-                remaining = [
-                    (ts, v)
-                    for v, ts in (viewers or {}).items()
-                    if v is not transport and not _transport_is_dead(v)
-                ]
-                if remaining:
-                    remaining.sort(key=lambda kv: kv[0])
-                    session["transport"] = remaining[-1][1]
+            # reap against a session that has a live owner. Attach and detach
+            # both serialize on _session_transport_lock, so this check is
+            # race-free against them.
+            with _session_transport_lock:
+                if _session_has_live_transport(session, excluding=transport):
                     continue
                 session["transport"] = _detached_ws_transport
                 session.pop("_client_gone_interrupt_requested", None)
