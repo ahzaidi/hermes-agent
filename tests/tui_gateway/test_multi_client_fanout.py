@@ -315,7 +315,13 @@ def test_a_single_client_session_writes_through_the_bare_transport(monkeypatch):
     finally:
         server._sessions.pop("sid", None)
 
-    assert a.frames == [
+    # The replay contract stamps a monotonic ``seq`` on WS event frames;
+    # ignore it here — this control test is about routing, not numbering.
+    frames = [
+        {**f, "params": {k: v for k, v in f["params"].items() if k != "seq"}}
+        for f in a.frames
+    ]
+    assert frames == [
         {
             "jsonrpc": "2.0",
             "method": "event",
