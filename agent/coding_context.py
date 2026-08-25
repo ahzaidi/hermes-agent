@@ -388,11 +388,13 @@ def _resolve_cwd(cwd: Optional[str | Path]) -> Path:
 
 
 def _git_root(cwd: Path) -> Optional[Path]:
-    current = cwd.resolve()
-    for parent in [current, *current.parents]:
-        if (parent / ".git").exists():
-            return parent
-    return None
+    top_level = _git(cwd.resolve(), "rev-parse", "--show-toplevel")
+    if not top_level:
+        return None
+    try:
+        return Path(top_level).resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 def _home() -> Optional[Path]:

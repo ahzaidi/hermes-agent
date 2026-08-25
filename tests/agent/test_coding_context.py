@@ -92,6 +92,36 @@ class TestCodingSelection:
 
 # ── git/workspace probe ─────────────────────────────────────────────────────
 
+class TestGitRootProbe:
+    def test_real_repository_returns_toplevel(self, tmp_path):
+        _git_init(tmp_path)
+        nested = tmp_path / "src" / "pkg"
+        nested.mkdir(parents=True)
+        assert cc._git_root(nested) == tmp_path.resolve()
+
+    def test_empty_dot_git_directory_is_not_a_repository(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        assert cc._git_root(tmp_path) is None
+
+    def test_linked_worktree_git_file_returns_worktree_root(self, tmp_path):
+        main_tree = tmp_path / "main"
+        main_tree.mkdir()
+        _git_init(main_tree)
+        worktree = tmp_path / "worktree"
+        subprocess.run(
+            ["git", "-C", str(main_tree), "worktree", "add", "-b", "probe-worktree", str(worktree)],
+            check=True,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path),
+                 "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+        )
+        assert (worktree / ".git").is_file()
+        assert cc._git_root(worktree) == worktree.resolve()
+
+    def test_non_repository_returns_none(self, tmp_path):
+        assert cc._git_root(tmp_path) is None
+
+
 class TestWorkspaceBlock:
     def test_empty_outside_repo(self, tmp_path):
         assert cc.build_coding_workspace_block(tmp_path) == ""
