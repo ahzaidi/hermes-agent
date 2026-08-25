@@ -64,6 +64,35 @@ class TestProviderEnvDetection:
         content = "TERMINAL_ENV=local\n"
         assert not _has_provider_env_config(content)
 
+    def test_usable_auth_accepts_external_provider_credential(self, monkeypatch):
+        for key in doctor._PROVIDER_ENV_HINTS:
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "injected-value")
+        assert doctor._has_usable_model_auth()
+
+    def test_usable_auth_accepts_logged_in_oauth(self, monkeypatch):
+        for key in doctor._PROVIDER_ENV_HINTS:
+            monkeypatch.delenv(key, raising=False)
+        from hermes_cli import auth
+        monkeypatch.setattr(auth, "get_nous_auth_status_local", lambda: {"logged_in": True})
+        monkeypatch.setattr(auth, "get_codex_auth_status", lambda: {})
+        monkeypatch.setattr(auth, "get_minimax_oauth_auth_status", lambda: {})
+        monkeypatch.setattr(auth, "get_xai_oauth_auth_status", lambda: {})
+        assert doctor._has_usable_model_auth()
+
+    def test_usable_auth_rejects_missing_credentials(self, monkeypatch):
+        for key in doctor._PROVIDER_ENV_HINTS:
+            monkeypatch.delenv(key, raising=False)
+        from hermes_cli import auth
+        for name in (
+            "get_nous_auth_status_local",
+            "get_codex_auth_status",
+            "get_minimax_oauth_auth_status",
+            "get_xai_oauth_auth_status",
+        ):
+            monkeypatch.setattr(auth, name, lambda: {})
+        assert not doctor._has_usable_model_auth()
+
 
 class TestDoctorToolAvailabilitySummary:
     def test_missing_api_key_summary_ignores_disabled_toolsets(self, monkeypatch):

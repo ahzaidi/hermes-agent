@@ -266,6 +266,29 @@ def _has_provider_env_config(content: str) -> bool:
     return any(key in content for key in _PROVIDER_ENV_HINTS)
 
 
+def _has_usable_model_auth() -> bool:
+    """Return True when model auth is available outside the plaintext .env file."""
+    if any(os.environ.get(key, "").strip() for key in _PROVIDER_ENV_HINTS):
+        return True
+
+    try:
+        from hermes_cli import auth
+
+        for name in (
+            "get_nous_auth_status_local",
+            "get_codex_auth_status",
+            "get_minimax_oauth_auth_status",
+            "get_xai_oauth_auth_status",
+        ):
+            status_fn = getattr(auth, name, None)
+            if status_fn is not None and bool((status_fn() or {}).get("logged_in")):
+                return True
+    except Exception:
+        # Doctor must remain fail-soft when an optional auth backend is absent.
+        pass
+    return False
+
+
 def _honcho_is_configured_for_doctor() -> bool:
     """Return True when Honcho is configured, even if this process has no active session."""
     try:
@@ -1266,6 +1289,8 @@ def run_doctor(args):
             content = env_path.read_text(encoding="latin-1")
         if _has_provider_env_config(content):
             check_ok("API key or custom endpoint configured")
+        elif _has_usable_model_auth():
+            check_ok("Model authentication available outside .env")
         else:
             check_warn(f"No API key found in {_DHH}/.env")
             issues.append("Run 'hermes setup' to configure API keys")
@@ -1291,7 +1316,8 @@ def run_doctor(args):
                 fixed_count += 1
             else:
                 check_info("Run 'hermes setup' to create one")
-                issues.append("Run 'hermes setup' to create .env")
+                if not _has_usable_model_auth():
+                    issues.append("Run 'hermes setup' to create .env")
     
     # Check ~/.hermes/config.yaml (primary) or project cli-config.yaml (fallback)
     config_path = HERMES_HOME / 'config.yaml'
